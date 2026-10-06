@@ -1,86 +1,83 @@
-import numpy as np
-import pandas as pd
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import math
+import random
+import streamlit as st
 
-# ---------------------------------------------------------
-# 1. 예시 데이터 생성 (1906년 ~ 2025년, 총 120년 데이터)
-# * 실제 데이터를 사용할 경우 pd.read_csv() 등을 활용하세요.
-# ---------------------------------------------------------
-np.random.seed(42)
-years = np.arange(1906, 2026)
+st.title("연평균 기온 선형회귀 분석")
 
-# 지구 온난화 경향 반영: 최근으로 갈수록 기온 상승 폭이 커지는 가상 데이터
-base_temp = 12.0
-trend = (years - 1906) * 0.015 + ((years - 1906) / 100) ** 2 * 0.5
-noise = np.random.normal(0, 0.4, len(years))
-temperatures = base_temp + trend + noise
+# 1. 데이터 생성 (1906 ~ 2025)
+random.seed(42)
+years = list(range(1906, 2026))
+temps = []
+for y in years:
+    t = 10.8 + 0.012 * (y - 1906) + 0.00012 * ((y - 1906) ** 2) + random.gauss(0, 0.45)
+    temps.append(t)
 
-df = pd.DataFrame({'Year': years, 'Temp': temperatures})
+# 데이터 분할
+def get_split(start_yr, end_yr):
+    x, y = [], []
+    for yr, tp in zip(years, temps):
+        if start_yr <= yr <= end_yr:
+            x.append(yr)
+            y.append(tp)
+    return x, y
 
-# ---------------------------------------------------------
-# 2. 데이터셋 분할
-# ---------------------------------------------------------
-# 공통 테스트 데이터 (최근 20년: 2006 ~ 2025)
-test_df = df[(df['Year'] >= 2006) & (df['Year'] <= 2025)]
-X_test = test_df[['Year']]
-y_test = test_df['Temp']
+x_test, y_test = get_split(2006, 2025)
 
-# 학습 데이터 1: 전체 데이터 (1906 ~ 2025)
-X_all = df[['Year']]
-y_all = df['Temp']
+# 선형회귀 학습 및 평가 함수 (최소제곱법)
+def run_regression(x_train, y_train, x_eval, y_eval):
+    n = len(x_train)
+    mean_x = sum(x_train) / n
+    mean_y = sum(y_train) / n
 
-# 학습 데이터 2: 최근 50년 (1956 ~ 2005)
-train_50_df = df[(df['Year'] >= 1956) & (df['Year'] <= 2005)]
-X_train_50 = train_50_df[['Year']]
-y_train_50 = train_50_df['Temp']
+    num = sum((x - mean_x) * (y - mean_y) for x, y in zip(x_train, y_train))
+    den = sum((x - mean_x) ** 2 for x in x_train)
 
-# 학습 데이터 3: 최근 100년 (1906 ~ 2005)
-train_100_df = df[(df['Year'] >= 1906) & (df['Year'] <= 2005)]
-X_train_100 = train_100_df[['Year']]
-y_train_100 = train_100_df['Temp']
+    slope = num / den
+    intercept = mean_y - (slope * mean_x)
 
-# ---------------------------------------------------------
-# 3. 모델 학습 및 예측 함수
-# ---------------------------------------------------------
-def train_and_evaluate(X_tr, y_tr, X_te, y_te, model_name):
-    model = LinearRegression()
-    model.fit(X_tr, y_tr)
-    
-    # 예측 (공통 테스트 데이터 대상)
-    y_pred = model.predict(X_te)
-    
-    # 평가지표 계산
-    mae = mean_absolute_error(y_te, y_pred)
-    mse = mean_squared_error(y_te, y_pred)
-    r2 = r2_score(y_te, y_pred)
-    slope = model.coef_[0]
-    intercept = model.intercept_
-    
-    return {
-        'Model': model_name,
-        'Slope (기울기)': slope,
-        'Intercept (절편)': intercept,
-        'MAE': mae,
-        'MSE': mse,
-        'R²': r2
-    }
+    # 예측
+    y_pred = [slope * x + intercept for x in x_eval]
 
-# ---------------------------------------------------------
-# 4. 모델 실행 및 결과 수집
-# ---------------------------------------------------------
-results = []
+    # 평가지표
+    m = len(y_eval)
+    mae = sum(abs(act - prd) for act, prd in zip(y_eval, y_pred)) / m
+    mse = sum((act - prd) ** 2 for act, prd in zip(y_eval, y_pred)) / m
 
-# (1) 전체 데이터 평가 (전체 데이터로 학습 후 테스트 데이터 평가)
-results.append(train_and_evaluate(X_all, y_all, X_test, y_test, "전체 데이터 (1906~2025)"))
+    mean_test_y = sum(y_eval) / m
+    ss_tot = sum((act - mean_test_y) ** 2 for act in y_eval)
+    ss_res = sum((act - prd) ** 2 for act, prd in zip(y_eval, y_pred))
+    r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
 
-# (2) 최근 50년 학습 모델 평가
-results.append(train_and_evaluate(X_train_50, y_train_50, X_test, y_test, "최근 50년 학습 (1956~2005)"))
+    return slope, intercept, mae, mse, r2
 
-# (3) 최근 100년 학습 모델 평가
-results.append(train_and_evaluate(X_train_100, y_train_100, X_test, y_test, "최근 100년 학습 (1906~2005)"))
+# 모델 실행
+x_all, y_all = get_split(1906, 2025)
+x_50, y_50 = get_split(1956, 2005)
+x_100, y_100 = get_split(1906, 2005)
+
+s_all, i_all, mae_all, mse_all, r2_all = run_regression(
+    x_all, y_all, x_test, y_test
+)
+s_50, i_50, mae_50, mse_50, r2_50 = run_regression(
+    x_50, y_50, x_test, y_test
+)
+s_100, i_100, mae_100, mse_100, r2_100 = run_regression(
+    x_100, y_100, x_test, y_test
+)
 
 # 결과 출력
-results_df = pd.DataFrame(results)
-print("=== 모델별 회귀선 기울기 및 공통 테스트 데이터(2006~2025) 예측 성능 비교 ===")
-print(results_df.to_string(index=False))
+st.subheader("모델별 테스트 데이터(2006~2025) 예측 성능 비교")
+
+data = {
+    "모델": [
+        "전체 데이터 (1906~2025)",
+        "최근 50년 학습 (1956~2005)",
+        "최근 100년 학습 (1906~2005)",
+    ],
+    "기울기 (Slope)": [f"{s_all:.4f}", f"{s_50:.4f}", f"{s_100:.4f}"],
+    "MAE": [f"{mae_all:.4f}", f"{mae_50:.4f}", f"{mae_100:.4f}"],
+    "MSE": [f"{mse_all:.4f}", f"{mse_50:.4f}", f"{mse_100:.4f}"],
+    "R²": [f"{r2_all:.4f}", f"{r2_50:.4f}", f"{r2_100:.4f}"],
+}
+
+st.table(data)
